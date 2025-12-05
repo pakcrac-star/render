@@ -1,222 +1,424 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>Pakcrac Flower Renderer</title>
-<style>
-    body { margin:0; overflow:hidden; background:#131115; color:white; font-family:sans-serif; }
-    #main { position:fixed; left:0; top:0; transform-origin:0 0; width:1024px; height:1024px; }
-    canvas { display:block; width:100%; height:100%; }
-    #ui { position:fixed; top:10px; left:10px; background:rgba(20,20,20,0.8); padding:10px; border-radius:8px; }
-    #ui button, #ui select, #ui input { margin:4px; }
-    #kernelArea { display:none; margin-top:8px; }
-    #kernelArea textarea { width:300px; height:150px; }
-    #infoBox { position:fixed; bottom:10px; left:10px; background:rgba(0,0,0,0.5); padding:6px 10px; border-radius:6px; font-size:14px; }
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sequential Performance Scaling Renderer (Nightmare Mode)</title>
+    <!-- Load Tailwind CSS for modern, responsive styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom styles for the dark theme and single canvas container */
+        body {
+            margin: 0;
+            background: #131115;
+            color: #E5E7EB;
+            font-family: 'Inter', sans-serif;
+        }
+        .main-render-container {
+            position: relative;
+            background-color: #000;
+            border-radius: 12px;
+            overflow: hidden;
+            width: 100%;
+            /* Make it responsive and square on mobile */
+            aspect-ratio: 1 / 1; 
+            max-width: 800px;
+            margin: 0 auto;
+            box-shadow: 0 0 40px rgba(189, 44, 189, 0.5); /* Pink shadow for effect */
+        }
+        .render-canvas {
+            display: none; /* Hidden by default, controlled by JS */
+            width: 100%;
+            height: 100%;
+            border-radius: 12px;
+        }
+        .render-canvas.active {
+            display: block;
+        }
+        .overlay-label {
+            position: absolute;
+            top: 0.75rem;
+            left: 0.75rem;
+            padding: 0.4rem 0.75rem;
+            border-radius: 6px;
+            font-size: 1.1rem;
+            font-weight: bold;
+            z-index: 10;
+            transition: background 0.3s;
+        }
+        .overlay-time {
+            position: absolute;
+            bottom: 0.75rem;
+            right: 0.75rem;
+            padding: 0.4rem 0.75rem;
+            border-radius: 6px;
+            font-size: 1.1rem;
+            font-weight: bold;
+            background: rgba(0, 0, 0, 0.8);
+            color: #FFF;
+            z-index: 10;
+        }
+        .stage-indicator-bar {
+            height: 8px;
+            border-radius: 4px;
+            margin-top: 1rem;
+            display: flex;
+            gap: 4px;
+        }
+        .stage-segment {
+            flex-grow: 1;
+            background-color: #374151; /* Default background */
+            transition: background-color 0.5s ease-in-out;
+            border-radius: 2px;
+        }
+        .stage-segment.success-gpu { background-color: #10B981; } /* Green for success */
+        .stage-segment.active-gpu { background-color: #3B82F6; } /* Blue for active */
+        .stage-segment.success-cpu { background-color: #FBBF24; } /* Yellow for success */
+        .stage-segment.active-cpu { background-color: #F97316; } /* Orange for active */
+        .stage-segment.success-hybrid { background-color: #EC4899; } /* Pink for success */
+        .stage-segment.active-hybrid { background-color: #BE185D; } /* Darker pink for active */
+    </style>
 </head>
 <body>
+    <div class="min-h-screen p-4 md:p-8 flex flex-col lg:flex-row gap-8 max-w-7xl mx-auto">
+        <!-- Control Panel (Left/Top) -->
+        <div id="ui" class="lg:w-1/3 bg-gray-800 p-6 rounded-xl shadow-2xl h-fit order-2 lg:order-1">
+            <h1 class="text-3xl font-bold mb-4 text-pink-400">Sequential Performance Test (Aggressive Scaling)</h1>
+            <p class="mb-4 text-sm text-gray-400">Complexity factor increases rapidly to simulate a crushing workload. Watch how quickly each hardware stage fails and falls back to the next.</p>
+          
+            <div class="space-y-6">
+                <!-- Global Complexity -->
+                <div class="p-4 bg-gray-700 rounded-lg space-y-1">
+                    <h3 class="text-xl font-semibold text-gray-200">Current Complexity</h3>
+                    <p id="complexityDisplay" class="text-4xl font-mono text-lime-400">0.10</p>
+                </div>
 
-<div id="main">
-    <canvas id="c1" width="1024" height="1024"></canvas>
-</div>
+                <!-- Stage Indicator Bar -->
+                <div class="stage-indicator-bar">
+                    <div id="segmentGpu" class="stage-segment"></div>
+                    <div id="segmentCpu" class="stage-segment"></div>
+                    <div id="segmentHybrid" class="stage-segment"></div>
+                </div>
 
-<div id="ui">
-    <button id="toggleKernel">Show Kernel</button>
-    <button id="applyKernel">Apply Kernel</button>
-    <button id="resetCamera">Reset Camera</button>
-    <select id="renderMode">
-        <option value="gpu">GPU Render</option>
-        <option value="cpu">CPU Render</option>
-    </select>
-    <div>
-        <label>Red: <input type="range" id="redSlider" min="0" max="1" step="0.01" value="0.276"></label>
-        <label>Green: <input type="range" id="greenSlider" min="0" max="1" step="0.01" value="0.920"></label>
-        <label>Blue: <input type="range" id="blueSlider" min="0" max="1" step="0.01" value="0.276"></label>
+                <!-- Performance Threshold Info -->
+                <div class="p-4 bg-gray-700 rounded-lg text-sm border-l-4 border-l-blue-400">
+                    <p class="mt-1 font-semibold text-gray-100">Active Stage: <span id="currentStage" class="text-blue-400">GPU</span></p>
+                    <p class="mt-2 text-gray-300">GPU/CPU Threshold: 50ms (20 FPS)</p>
+                    <p class="text-gray-300">Hybrid Threshold: 100ms (10 FPS)</p>
+                </div>
+
+                 <!-- Failure Report -->
+                 <div class="p-4 bg-gray-900 rounded-lg space-y-2">
+                    <h3 class="text-lg font-bold text-red-400">Failure Report</h3>
+                    <p class="text-sm text-gray-300">GPU Failed at: <span id="gpuFailComplexity" class="font-mono text-white">Pending...</span></p>
+                    <p class="text-sm text-gray-300">CPU Failed at: <span id="cpuFailComplexity" class="font-mono text-white">Pending...</span></p>
+                 </div>
+
+                 <!-- Render Mode & Camera -->
+                <div class="flex flex-wrap gap-3">
+                    <button id="resetCamera" class="flex-1 px-4 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition shadow-md font-semibold">Reset Camera</button>
+                    <button id="resetTest" class="flex-1 px-4 py-3 bg-red-600 hover:bg-red-700 text-white rounded-lg transition shadow-md font-semibold">Restart Test</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Render Viewport (Right/Bottom) -->
+        <div class="lg:w-2/3 flex flex-col gap-6 order-1 lg:order-2">
+            <div id="mainRenderBox" class="main-render-container shadow-2xl">
+                <!-- All three canvases are here, but only one is visible at a time -->
+                <canvas id="gpuCanvas" class="render-canvas"></canvas>
+                <canvas id="cpuCanvas" class="render-canvas"></canvas>
+                <canvas id="hybridCanvas" class="render-canvas"></canvas>
+
+                <div id="overlayLabel" class="overlay-label"></div>
+                <div id="overlayTime" class="overlay-time"></div>
+
+                <!-- Fallback message for Finished state -->
+                 <div id="finishedMessage" class="absolute inset-0 flex flex-col items-center justify-center p-8 text-center text-gray-300 bg-gray-900/90 hidden">
+                    <svg class="w-20 h-20 text-lime-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                    <h2 class="text-3xl font-bold mb-2 text-white">Test Finished!</h2>
+                    <p class="text-lg">Hybrid rendering failed at <span id="finalComplexity" class="font-mono text-lime-300"></span>. System reached maximum failure state.</p>
+                    <p class="mt-4 text-sm">Click 'Restart Test' to run again.</p>
+                </div>
+            </div>
+        </div>
     </div>
-    <div id="kernelArea">
-        <textarea id="kernelText"></textarea>
-    </div>
-</div>
-
-<div id="infoBox">Pakcrac Flower Renderer | Mode: GPU</div>
-
-<script>
-let canvas = document.getElementById('c1');
-let cx, cy;
-let ang1=2.8, ang2=0.4, cenx=0, ceny=0, cenz=0;
-let len = 1.6;
-let mx=0,my=0,ml=0,mr=0,mm=0;
-let lastTouch=0;
-let renderMode = "gpu";
-
-// Default flower kernel
-let KERNEL = `
-float kernal(vec3 p){
-    float r = length(p);
-    float theta = atan(p.y,p.x);
-    float phi = acos(p.z/r);
-    float petals = 6.0;
-    float k = cos(petals*theta)*sin(phi);
-    float density = exp(-r*r*2.0)*k;
-    return density;
-}
-`;
-
-let infoBox = document.getElementById('infoBox');
-
-function updateViewport(){
-    cx = document.body.clientWidth;
-    cy = document.body.clientHeight;
-    document.getElementById('main').style.width="1024px";
-    document.getElementById('main').style.height="1024px";
-    document.getElementById('main').style.transform="scale("+cx/1024+","+cy/1024+")";
-}
-window.onresize=updateViewport;
-updateViewport();
-
-// Camera controls
-document.addEventListener('mousedown',(e)=>{ if(e.button==0) ml=1; if(e.button==2) mr=1; mx=e.clientX; my=e.clientY; });
-document.addEventListener('mouseup',(e)=>{ if(e.button==0) ml=0; if(e.button==2) mr=0; });
-document.addEventListener('mousemove',(e)=>{
-    if(ml){ ang1+=(e.clientX-mx)*0.002; ang2+=(e.clientY-my)*0.002; mm=1; }
-    if(mr){
-        let l=len*4/(cx+cy);
-        cenx+=l*(-(e.clientX-mx)*Math.sin(ang1)-(e.clientY-my)*Math.sin(ang2)*Math.cos(ang1));
-        ceny+=l*((e.clientY-my)*Math.cos(ang2));
-        cenz+=l*((e.clientX-mx)*Math.cos(ang1)-(e.clientY-my)*Math.sin(ang2)*Math.sin(ang1));
-        mm=1;
-    }
-    mx=e.clientX; my=e.clientY;
-});
-document.addEventListener('wheel',(e)=>{ e.preventDefault(); len *= Math.exp(-0.001*e.deltaY); },{passive:false});
-document.addEventListener('touchstart',(e)=>{
-    if(e.touches.length==1){ mx=e.touches[0].clientX; my=e.touches[0].clientY; }
-    lastTouch=e.touches.length;
-});
-document.addEventListener('touchmove',(e)=>{
-    e.preventDefault();
-    if(e.touches.length==1&&lastTouch==1){ ang1+=(e.touches[0].clientX-mx)*0.002; ang2+=(e.touches[0].clientY-my)*0.002; mx=e.touches[0].clientX; my=e.touches[0].clientY; }
-},{passive:false});
-
-// GPU Shader
-let gl = canvas.getContext('webgl');
-if(!gl){ renderMode='cpu'; }
-
-let VSHADER_SOURCE = `
-attribute vec4 position;
-varying vec3 dir;
-uniform vec3 right, forward, up, origin;
-uniform float x,y;
-void main(){
-    gl_Position = position;
-    dir = forward + right*position.x*x + up*position.y*y;
-}`;
-
-let FSHADER_SOURCE = `
-precision highp float;
-varying vec3 dir;
-uniform vec3 right, forward, up, origin;
-uniform float len;
-uniform float uColorR,uColorG,uColorB;
-float kernal(vec3 p);
-void main(){
-    vec3 color = vec3(0.0);
-    float step = 0.002;
-    for(int i=0;i<200;i++){
-        vec3 p = origin + dir*step*len*float(i);
-        float d = kernal(p);
-        color += vec3(uColorR,uColorG,uColorB)*d*0.05;
-    }
-    gl_FragColor = vec4(color,1.0);
-}
-`;
-
-// Compile GPU shaders
-function createShader(gl, type, source){ let s=gl.createShader(type); gl.shaderSource(s,source); gl.compileShader(s); return s; }
-let shaderProgram = gl.createProgram();
-let vertShader=createShader(gl, gl.VERTEX_SHADER, VSHADER_SOURCE);
-let fragShader=createShader(gl, gl.FRAGMENT_SHADER, FSHADER_SOURCE+KERNEL);
-gl.attachShader(shaderProgram, vertShader);
-gl.attachShader(shaderProgram, fragShader);
-gl.linkProgram(shaderProgram);
-gl.useProgram(shaderProgram);
-
-let glPos = gl.getAttribLocation(shaderProgram,'position');
-let glRight = gl.getUniformLocation(shaderProgram,'right');
-let glForward = gl.getUniformLocation(shaderProgram,'forward');
-let glUp = gl.getUniformLocation(shaderProgram,'up');
-let glOrigin = gl.getUniformLocation(shaderProgram,'origin');
-let glX = gl.getUniformLocation(shaderProgram,'x');
-let glY = gl.getUniformLocation(shaderProgram,'y');
-let glLen = gl.getUniformLocation(shaderProgram,'len');
-let uColorR = gl.getUniformLocation(shaderProgram,'uColorR');
-let uColorG = gl.getUniformLocation(shaderProgram,'uColorG');
-let uColorB = gl.getUniformLocation(shaderProgram,'uColorB');
-
-let positions = [-1,-1,0, 1,-1,0, 1,1,0, -1,-1,0, 1,1,0, -1,1,0];
-let buffer = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(positions),gl.STATIC_DRAW);
-gl.vertexAttribPointer(glPos,3,gl.FLOAT,false,0,0); gl.enableVertexAttribArray(glPos);
-
-// Draw GPU
-function drawGPU(){
-    gl.viewport(0,0,1024,1024);
-    gl.uniform1f(glX,cx*2/(cx+cy));
-    gl.uniform1f(glY,cy*2/(cx+cy));
-    gl.uniform1f(glLen,len);
-    gl.uniform3f(glOrigin,len*Math.cos(ang1)*Math.cos(ang2)+cenx,len*Math.sin(ang2)+ceny,len*Math.sin(ang1)*Math.cos(ang2)+cenz);
-    gl.uniform3f(glRight,Math.sin(ang1),0,-Math.cos(ang1));
-    gl.uniform3f(glUp,-Math.sin(ang2)*Math.cos(ang1),Math.cos(ang2),-Math.sin(ang2)*Math.sin(ang1));
-    gl.uniform3f(glForward,-Math.cos(ang1)*Math.cos(ang2),-Math.sin(ang2),-Math.sin(ang1)*Math.cos(ang2));
-    gl.uniform1f(uColorR,document.getElementById('redSlider').value);
-    gl.uniform1f(uColorG,document.getElementById('greenSlider').value);
-    gl.uniform1f(uColorB,document.getElementById('blueSlider').value);
-    gl.drawArrays(gl.TRIANGLES,0,6);
-}
-
-// CPU fallback
-function drawCPU(){
-    let ctx=canvas.getContext('2d');
-    let img=ctx.createImageData(canvas.width,canvas.height);
-    for(let y=0;y<canvas.height;y++){
-        for(let x=0;x<canvas.width;x++){
-            let i=(y*canvas.width+x)*4;
-            let nx=(x-canvas.width/2)/256, ny=(y-canvas.height/2)/256;
-            let r=Math.sqrt(nx*nx+ny*ny);
-            let petals=Math.sin(r*12.0)*0.5+0.5;
-            img.data[i]=document.getElementById('redSlider').value*255*petals;
-            img.data[i+1]=document.getElementById('greenSlider').value*255*petals;
-            img.data[i+2]=document.getElementById('blueSlider').value*255*petals;
-            img.data[i+3]=255;
+    <script>
+        // --- Global State and Constants ---
+        const RENDER_SIZE = 512;
+        // Performance Thresholds (The nightmare test values)
+        const GPU_THRESHOLD_MS = 50; // 20 FPS
+        const CPU_THRESHOLD_MS = 50; // 20 FPS
+        const HYBRID_THRESHOLD_MS = 100; // 10 FPS for the final attempt
+      
+        // Fixed Color (Magenta/Pink for the Dahlia/Peony)
+        const FLOWER_COLOR = { R: 1.0, G: 0.2, B: 0.8 }; 
+      
+        // Camera and interaction globals (Set to a good initial view for the flower)
+        let ang1 = 2.8, ang2 = 0.4;
+        let cenx = 0, ceny = 0, cenz = 0;
+        let len = 1.6;
+        let ml = 0, mr = 0; 
+        let mx = 0, my = 0; 
+        let mx1 = 0, my1 = 0; 
+        let lasttimen = 0; 
+        let mm = 0; 
+      
+        // Performance Scaling State
+        let complexityFactor = 0.1; // Start at a low, stable complexity
+        let renderStage = 'GPU'; // 'GPU', 'CPU', 'HYBRID', 'FINISHED'
+      
+        // Failure points
+        let gpuFailComplexity = null;
+        let cpuFailComplexity = null;
+        let hybridFailComplexity = null;
+      
+        // Performance metrics
+        let gpuTime = 0;
+        let cpuTime = 0;
+        let hybridTime = 0;
+      
+        // The final GPU image data (Base64) saved on transition to CPU
+        let finalGpuImageData = null; 
+      
+        // --- UPDATED KERNEL FOR DAHLIA-LIKE 3D FRACTAL FLOWER (EXTREME COMPLEXITY) ---
+        const KERNEL_TEMPLATE = `
+        // A function for expensive, high-detail fractal noise
+        float high_detail_noise(vec3 p, float c) {
+            float f = 0.0;
+            // CRITICAL: Max iterations scales extremely aggressively with complexity
+            // At complexity 5.0, this maxIter is 51.0 (very expensive)
+            float maxIter = floor(min(100.0, c * 10.0 + 1.0)); 
+            for(int i = 0; i < 100; ++i) { // Loop limit is 100 for heavy load
+                if (float(i) < maxIter) {
+                    // Expensive fold operation and coordinate scaling
+                    p = abs(p) / (dot(p, p) + 0.0001) - 0.5; 
+                    f += sin(p.x * 50.0 + c * 10.0) * 0.02 / (float(i) + 1.0);
+                }
+            }
+            return f;
         }
-    }
-    ctx.putImageData(img,0,0);
-}
-
-// Animation loop
-function animate(){
-    if(renderMode==='gpu') drawGPU();
-    else drawCPU();
-    infoBox.innerText=`Pakcrac Flower Renderer | Mode: ${renderMode.toUpperCase()}`;
-    requestAnimationFrame(animate);
-}
-animate();
-
-// UI
-document.getElementById('toggleKernel').addEventListener('click',()=>{
-    let area=document.getElementById('kernelArea');
-    area.style.display=(area.style.display==='none')?'block':'none';
-    document.getElementById('kernelText').value=KERNEL;
-});
-document.getElementById('applyKernel').addEventListener('click',()=>{
-    KERNEL=document.getElementById('kernelText').value;
-    gl.shaderSource(fragShader,FSHADER_SOURCE+KERNEL); gl.compileShader(fragShader);
-    gl.linkProgram(shaderProgram); gl.useProgram(shaderProgram);
-});
-document.getElementById('resetCamera').addEventListener('click',()=>{ ang1=2.8; ang2=0.4; cenx=0; ceny=0; cenz=0; len=1.6; });
-document.getElementById('renderMode').addEventListener('change',(e)=>{ renderMode=e.target.value; });
-</script>
-
-</body>
-</html>
+      
+        // The main SDF/Density function for the 3D Dahlia
+        float kernal(vec3 p, float c){ 
+            float r = length(p);
+          
+            // 1. Angular Density (Petal Count/Spiral)
+            float petals = 8.0 + c * 6.0; 
+            float spiral = atan(p.y,p.x) + p.z * (2.0 + c * 0.5); 
+            float petalShape = cos(spiral * petals) * 0.5 + 0.5;
+          
+            // 2. Vertical Shape (The overall spherical profile)
+            float phi = acos(p.z/r); 
+            float verticalShape = sin(phi * (3.0 + c * 1.0)); 
+          
+            // 3. Radial Falloff (Density is highest near the center)
+            float radialDensity = exp(-r*r * (5.0 + c * 2.0)); 
+          
+            float density = petalShape * verticalShape * radialDensity;
+      
+            // CRITICAL: Add high-complexity noise for surface texture as complexity increases
+            if (c > 0.1) {
+                density += high_detail_noise(p * (1.0 + c * 0.5), c) * 0.05;
+            }
+      
+            // Add extra fractal detail to the base density to increase shading cost
+            density += sin(p.x*10.0) * cos(p.y*10.0) * sin(p.z*10.0) * c * 0.01;
+      
+            // Return the density field
+            return density;
+        }
+        `;
+      
+      
+        // --- UI Elements & Setup ---
+        const gpuCanvas = document.getElementById('gpuCanvas');
+        const cpuCanvas = document.getElementById('cpuCanvas');
+        const hybridCanvas = document.getElementById('hybridCanvas');
+      
+        const uiElements = {
+            overlayLabel: document.getElementById('overlayLabel'),
+            overlayTime: document.getElementById('overlayTime'),
+            complexityDisplay: document.getElementById('complexityDisplay'),
+            currentStage: document.getElementById('currentStage'),
+            finishedMessage: document.getElementById('finishedMessage'),
+            finalComplexity: document.getElementById('finalComplexity'),
+            segmentGpu: document.getElementById('segmentGpu'),
+            segmentCpu: document.getElementById('segmentCpu'),
+            segmentHybrid: document.getElementById('segmentHybrid'),
+            gpuFailComplexity: document.getElementById('gpuFailComplexity'),
+            cpuFailComplexity: document.getElementById('cpuFailComplexity'),
+        };
+      
+        // Set fixed internal render size for consistency
+        [gpuCanvas, cpuCanvas, hybridCanvas].forEach(c => {
+            c.width = RENDER_SIZE;
+            c.height = RENDER_SIZE;
+        });
+      
+        // --- WebGL Setup (GPU Render) ---
+        // Initialize context with preserveDrawingBuffer: true to allow for image capture
+        const gl = gpuCanvas.getContext('webgl', { preserveDrawingBuffer: true }); 
+      
+        let shaderProgram;
+      
+        // Uniform location aliases
+        let glposition, glright, glforward, glup, glorigin, glx, gly, gllen;
+        let glColorR, glColorG, glColorB;
+        let glComplexity;
+      
+        const VSHADER_SOURCE =
+            "#version 100 \n"+
+            "precision highp float;\n" +
+            "attribute vec4 position;" +
+            "varying vec3 dir, localdir;" +
+            "uniform vec3 right, forward, up, origin;" +
+            "uniform float x,y;" +
+            "void main() {" +
+            " gl_Position = position; " +
+            " dir = forward + right * position.x*x + up * position.y*y;" +
+            " localdir.x = position.x*x;" +
+            " localdir.y = position.y*y;" +
+            " localdir.z = -1.0;" +
+            "} ";
+      
+        const FSHADER_SOURCE_CORE =
+            // The core raymarching logic (long and complex)
+            "#version 100 \n" +
+            "#define PI 3.14159265358979324\n" +
+            "#define M_L 0.3819660113\n" +
+            "#define M_R 0.6180339887\n" +
+            "#define MAXR 8\n" +
+            "#define SOLVER 8\n" +
+            "precision highp float;\n" +
+            // NOTE: kernal(vec3, float) function definition is INJECTED here
+            "uniform vec3 right, forward, up, origin;\n" +
+            "varying vec3 dir, localdir;\n" +
+            "uniform float len, uComplexity;\n" + // uComplexity added
+            "uniform float uColorR, uColorG, uColorB;\n" +
+            "vec3 ver;\n" +
+            "int sign;\n" +
+            "float v, v1, v2;\n" +
+            "float r1, r2, r3, r4, m1, m2, m3, m4;\n" +
+            "vec3 n, reflect;\n" +
+            "const float step = 0.002;\n" +
+            "const float MAX_DISTANCE = 3.0; \n" + // Added Max Distance for stability
+            "vec3 color;\n" +
+            "void main() {\n" +
+            " color = vec3(0.0);\n" +
+            " sign=0;\n"+
+            " v1 = kernal(origin + dir * (step*len), uComplexity);\n" +
+            " v2 = kernal(origin, uComplexity);\n" +
+            " for (int k = 2; k < 1002; k++) {\n" + // Max 1000 steps
+            " float currentR = step * len * float(k);\n" +
+            " if (currentR > MAX_DISTANCE) break; \n" +
+            " ver = origin + dir * currentR;\n" +
+            " v = kernal(ver, uComplexity);\n" +
+              
+            // --- SOLVER 1: Root Finding ---
+            " if (v > 0.0 && v1 < 0.0) {\n" +
+            " r1 = step * len*float(k - 1);\n" +
+            " r2 = currentR;\n" +
+            " m1 = kernal(origin + dir * r1, uComplexity);\n" +
+            " m2 = kernal(origin + dir * r2, uComplexity);\n" +
+            " for (int l = 0; l < SOLVER; l++) {\n" +
+            " r3 = r1 * 0.5 + r2 * 0.5;\n" +
+            " m3 = kernal(origin + dir * r3, uComplexity);\n" +
+            " if (m3 > 0.0) {\n" +
+            " r2 = r3;\n" +
+            " m2 = m3;\n" +
+            " }\n" +
+            " else {\n" +
+            " r1 = r3;\n" +
+            " m1 = m3;\n" +
+            " }\n" +
+            " }\n" +
+            " if (r3 < MAX_DISTANCE) {\n" +
+            " sign=1;" +
+            " break;\n" +
+            " }\n" +
+            " }\n" +
+              
+            // --- SOLVER 2: Maxima Finding (Gold Section Search) ---
+            " if (v < v1&&v1>v2&&v1 < 0.0 && (v1*2.0 > v || v1 * 2.0 > v2)) {\n" +
+            " r1 = step * len*float(k - 2);\n" +
+            " r2 = step * len*(float(k) - 2.0 + 2.0*M_L);\n" +
+            " r3 = step * len*(float(k) - 2.0 + 2.0*M_R);\n" +
+            " r4 = currentR;\n" +
+            " m2 = kernal(origin + dir * r2, uComplexity);\n" +
+            " m3 = kernal(origin + dir * r3, uComplexity);\n" +
+            " for (int l = 0; l < MAXR; l++) {\n" +
+            " if (m2 > m3) {\n" +
+            " r4 = r3;\n" +
+            " r3 = r2;\n" +
+            " r2 = r4 * M_L + r1 * M_R;\n" +
+            " m3 = m2;\n" +
+            " m2 = kernal(origin + dir * r2, uComplexity);\n" +
+            " }\n" +
+            " else {\n" +
+            " r1 = r2;\n" +
+            " r2 = r3;\n" +
+            " r3 = r4 * M_R + r1 * M_L;\n" +
+            " m2 = m3;\n" +
+            " m3 = kernal(origin + dir * r3, uComplexity);\n" +
+            " }\n" +
+            " }\n" +
+            " if (m2 > 0.0) {\n" +
+            " r1 = step * len*float(k - 2);\n" +
+            " r2 = r2;\n" +
+            " m1 = kernal(origin + dir * r1, uComplexity);\n" +
+            " m2 = kernal(origin + dir * r2, uComplexity);\n" +
+            " for (int l = 0; l < SOLVER; l++) {\n" +
+            " r3 = r1 * 0.5 + r2 * 0.5;\n" +
+            " m3 = kernal(origin + dir * r3, uComplexity);\n" +
+            " if (m3 > 0.0) {\n" +
+            " r2 = r3;\n" +
+            " m2 = m3;\n" +
+            " }\n" +
+            " else {\n" +
+            " r1 = r3;\n" +
+            " m1 = m3;\n" +
+            " }\n" +
+            " }\n" +
+            " if (r3 < MAX_DISTANCE && r3 > step * len) {\n" +
+            " sign=1;" +
+            " break;\n" +
+            " }\n" +
+            " }\n" +
+            " else if (m3 > 0.0) {\n" +
+            " r1 = step * len*float(k - 2);\n" +
+            " r2 = r3;\n" +
+            " m1 = kernal(origin + dir * r1, uComplexity);\n" +
+            " m2 = kernal(origin + dir * r2, uComplexity);\n" +
+            " for (int l = 0; l < SOLVER; l++) {\n" +
+            " r3 = r1 * 0.5 + r2 * 0.5;\n" +
+            " m3 = kernal(origin + dir * r3, uComplexity);\n" +
+            " if (m3 > 0.0) {\n" +
+            " r2 = r3;\n" +
+            " m2 = m3;\n" +
+            " }\n" +
+            " else {\n" +
+            " r1 = r3;\n" +
+            " m1 = m3;\n" +
+            " }\n" +
+            " }\n" +
+            " if (r3 < MAX_DISTANCE && r3 > step * len) {\n" +
+            " sign=1;" +
+            " break;\n" +
+            " }\n" +
+            " }\n" +
+            " }\n" +
+            " v2 = v1;\n" +
+            " v1 = v;\n" +
+            " }\n" +
+              
+            // --- LIGHTING AND SHADING ---
+            " if (sign==1) {\n" +
+            " ver = origin + dir*r3 ;\n" +
+            " r1=ver.x*ver.x+ver.y*ver.y+ver.z*ver.z;\n" +
+              
+            // Normal calculation using finite differences (still expensive)
+            " n.x = kernal(ver - right * (r3*0.00025), uComplexity) - kernal(ver + right * (r3*0.00025), uComplexity);\n" +
+            " n.y = kernal(ver - up * (r3*0.00025), uComplexity) - kernal(ver + up * (r3*0.00025), uComplexity);\n" +
+            " n.z = kernal(ver + forward * (r3*0.00025), uComplexity) - kernal(ver - forward * (r3*0.00025), uComplexity);\n" +
+            " r
