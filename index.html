@@ -3,47 +3,16 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>Flower Volumetric Renderer</title>
+<title>Pakcrac Flower Renderer</title>
 <style>
-    body {
-        margin: 0;
-        overflow: hidden;
-        background: #131115;
-        font-family: sans-serif;
-        color: white;
-    }
-    #main {
-        position: fixed;
-        left: 0;
-        top: 0;
-        transform-origin: 0 0;
-        width: 1024px;
-        height: 1024px;
-    }
-    canvas {
-        display: block;
-        width: 100%;
-        height: 100%;
-    }
-    #ui {
-        position: fixed;
-        top: 10px;
-        left: 10px;
-        background: rgba(20,20,20,0.8);
-        padding: 10px;
-        border-radius: 8px;
-    }
-    #ui button, #ui select, #ui input {
-        margin: 4px;
-    }
-    #kernelArea {
-        display: none;
-        margin-top: 8px;
-    }
-    #kernelArea textarea {
-        width: 300px;
-        height: 150px;
-    }
+    body { margin:0; overflow:hidden; background:#131115; color:white; font-family:sans-serif; }
+    #main { position:fixed; left:0; top:0; transform-origin:0 0; width:1024px; height:1024px; }
+    canvas { display:block; width:100%; height:100%; }
+    #ui { position:fixed; top:10px; left:10px; background:rgba(20,20,20,0.8); padding:10px; border-radius:8px; }
+    #ui button, #ui select, #ui input { margin:4px; }
+    #kernelArea { display:none; margin-top:8px; }
+    #kernelArea textarea { width:300px; height:150px; }
+    #infoBox { position:fixed; bottom:10px; left:10px; background:rgba(0,0,0,0.5); padding:6px 10px; border-radius:6px; font-size:14px; }
 </style>
 </head>
 <body>
@@ -70,129 +39,109 @@
     </div>
 </div>
 
-<script>
-alert("Volumetric Flower Renderer\nInteractive GPU/CPU Render\nCreated by cznull");
+<div id="infoBox">Pakcrac Flower Renderer | Mode: GPU</div>
 
+<script>
 let canvas = document.getElementById('c1');
-let gl = canvas.getContext('webgl');
 let cx, cy;
-let ang1=2.8, ang2=0.4;
-let cenx=0, ceny=0, cenz=0;
+let ang1=2.8, ang2=0.4, cenx=0, ceny=0, cenz=0;
 let len = 1.6;
-let mx=0, my=0, ml=0, mr=0, mm=0;
+let mx=0,my=0,ml=0,mr=0,mm=0;
 let lastTouch=0;
 let renderMode = "gpu";
 
-// Default Flower Kernel
+// Default flower kernel
 let KERNEL = `
 float kernal(vec3 p){
     float r = length(p);
-    float theta = atan(p.y, p.x);
-    float phi = acos(p.z / r);
+    float theta = atan(p.y,p.x);
+    float phi = acos(p.z/r);
     float petals = 6.0;
-    float k = cos(petals * theta) * sin(phi);
-    float density = exp(-r*r*2.0) * k;
+    float k = cos(petals*theta)*sin(phi);
+    float density = exp(-r*r*2.0)*k;
     return density;
 }
 `;
 
-// Shader sources
-let VSHADER_SOURCE = `#version 100
-precision highp float;
+let infoBox = document.getElementById('infoBox');
+
+function updateViewport(){
+    cx = document.body.clientWidth;
+    cy = document.body.clientHeight;
+    document.getElementById('main').style.width="1024px";
+    document.getElementById('main').style.height="1024px";
+    document.getElementById('main').style.transform="scale("+cx/1024+","+cy/1024+")";
+}
+window.onresize=updateViewport;
+updateViewport();
+
+// Camera controls
+document.addEventListener('mousedown',(e)=>{ if(e.button==0) ml=1; if(e.button==2) mr=1; mx=e.clientX; my=e.clientY; });
+document.addEventListener('mouseup',(e)=>{ if(e.button==0) ml=0; if(e.button==2) mr=0; });
+document.addEventListener('mousemove',(e)=>{
+    if(ml){ ang1+=(e.clientX-mx)*0.002; ang2+=(e.clientY-my)*0.002; mm=1; }
+    if(mr){
+        let l=len*4/(cx+cy);
+        cenx+=l*(-(e.clientX-mx)*Math.sin(ang1)-(e.clientY-my)*Math.sin(ang2)*Math.cos(ang1));
+        ceny+=l*((e.clientY-my)*Math.cos(ang2));
+        cenz+=l*((e.clientX-mx)*Math.cos(ang1)-(e.clientY-my)*Math.sin(ang2)*Math.sin(ang1));
+        mm=1;
+    }
+    mx=e.clientX; my=e.clientY;
+});
+document.addEventListener('wheel',(e)=>{ e.preventDefault(); len *= Math.exp(-0.001*e.deltaY); },{passive:false});
+document.addEventListener('touchstart',(e)=>{
+    if(e.touches.length==1){ mx=e.touches[0].clientX; my=e.touches[0].clientY; }
+    lastTouch=e.touches.length;
+});
+document.addEventListener('touchmove',(e)=>{
+    e.preventDefault();
+    if(e.touches.length==1&&lastTouch==1){ ang1+=(e.touches[0].clientX-mx)*0.002; ang2+=(e.touches[0].clientY-my)*0.002; mx=e.touches[0].clientX; my=e.touches[0].clientY; }
+},{passive:false});
+
+// GPU Shader
+let gl = canvas.getContext('webgl');
+if(!gl){ renderMode='cpu'; }
+
+let VSHADER_SOURCE = `
 attribute vec4 position;
-varying vec3 dir, localdir;
+varying vec3 dir;
 uniform vec3 right, forward, up, origin;
 uniform float x,y;
 void main(){
     gl_Position = position;
     dir = forward + right*position.x*x + up*position.y*y;
-    localdir = vec3(position.x*x, position.y*y, -1.0);
-}
-`;
+}`;
 
-let FSHADER_SOURCE = `#version 100
+let FSHADER_SOURCE = `
 precision highp float;
-#define PI 3.141592653589793
-#define M_L 0.3819660113
-#define M_R 0.6180339887
-#define MAXR 8
-#define SOLVER 8
-
+varying vec3 dir;
 uniform vec3 right, forward, up, origin;
 uniform float len;
-uniform float uColorR, uColorG, uColorB;
-varying vec3 dir, localdir;
-
-float kernal(vec3 ver);
-
+uniform float uColorR,uColorG,uColorB;
+float kernal(vec3 p);
 void main(){
     vec3 color = vec3(0.0);
-    int sign=0;
     float step = 0.002;
-    float v1 = kernal(origin + dir * (step*len));
-    float v2 = kernal(origin);
-    float v,r1,r2,r3,r4,m1,m2,m3,m4;
-    vec3 ver,n,reflect;
-
-    for(int k=2;k<1002;k++){
-        ver = origin + dir*(step*len*float(k));
-        v = kernal(ver);
-
-        if(v>0.0 && v1<0.0){
-            r1 = step*len*float(k-1);
-            r2 = step*len*float(k);
-            m1 = kernal(origin+dir*r1);
-            m2 = kernal(origin+dir*r2);
-            for(int l=0;l<SOLVER;l++){
-                r3 = r1*0.5+r2*0.5;
-                m3 = kernal(origin+dir*r3);
-                if(m3>0.0){ r2=r3; m2=m3; } else { r1=r3; m1=m3; }
-            }
-            if(r3<2.0*len){ sign=1; break; }
-        }
-        v2 = v1;
-        v1 = v;
+    for(int i=0;i<200;i++){
+        vec3 p = origin + dir*step*len*float(i);
+        float d = kernal(p);
+        color += vec3(uColorR,uColorG,uColorB)*d*0.05;
     }
-
-    if(sign==1){
-        ver = origin + dir*r3;
-        float rr = ver.x*ver.x + ver.y*ver.y + ver.z*ver.z;
-        n.x = kernal(ver - right*(r3*0.00025)) - kernal(ver + right*(r3*0.00025));
-        n.y = kernal(ver - up*(r3*0.00025)) - kernal(ver + up*(r3*0.00025));
-        n.z = kernal(ver + forward*(r3*0.00025)) - kernal(ver - forward*(r3*0.00025));
-        r3 = dot(n,n);
-        n = n * (1.0 / sqrt(r3));
-        ver = normalize(localdir);
-        reflect = n * (-2.0*dot(ver,n)) + ver;
-        r3 = dot(reflect, vec3(uColorR,uColorG,uColorB));
-        r3 = max(0.0,r3);
-        r3 = pow(r3,4.0)*0.45 + dot(n, vec3(uColorR,uColorG,uColorB))*0.25 + 0.3;
-        n.x = sin(rr*10.0)*0.5+0.5;
-        n.y = sin(rr*10.0+2.05)*0.5+0.5;
-        n.z = sin(rr*10.0-2.05)*0.5+0.5;
-        color = n*r3;
-    }
-
     gl_FragColor = vec4(color,1.0);
 }
 `;
 
-// Initialize shader
-let vertShader = gl.createShader(gl.VERTEX_SHADER);
-gl.shaderSource(vertShader,VSHADER_SOURCE);
-gl.compileShader(vertShader);
-
-let fragShader = gl.createShader(gl.FRAGMENT_SHADER);
-gl.shaderSource(fragShader,FSHADER_SOURCE+KERNEL);
-gl.compileShader(fragShader);
-
+// Compile GPU shaders
+function createShader(gl, type, source){ let s=gl.createShader(type); gl.shaderSource(s,source); gl.compileShader(s); return s; }
 let shaderProgram = gl.createProgram();
-gl.attachShader(shaderProgram,vertShader);
-gl.attachShader(shaderProgram,fragShader);
+let vertShader=createShader(gl, gl.VERTEX_SHADER, VSHADER_SOURCE);
+let fragShader=createShader(gl, gl.FRAGMENT_SHADER, FSHADER_SOURCE+KERNEL);
+gl.attachShader(shaderProgram, vertShader);
+gl.attachShader(shaderProgram, fragShader);
 gl.linkProgram(shaderProgram);
 gl.useProgram(shaderProgram);
 
-// Attributes & uniforms
 let glPos = gl.getAttribLocation(shaderProgram,'position');
 let glRight = gl.getUniformLocation(shaderProgram,'right');
 let glForward = gl.getUniformLocation(shaderProgram,'forward');
@@ -206,59 +155,13 @@ let uColorG = gl.getUniformLocation(shaderProgram,'uColorG');
 let uColorB = gl.getUniformLocation(shaderProgram,'uColorB');
 
 let positions = [-1,-1,0, 1,-1,0, 1,1,0, -1,-1,0, 1,1,0, -1,1,0];
-let buffer = gl.createBuffer();
-gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW);
-gl.vertexAttribPointer(glPos,3,gl.FLOAT,false,0,0);
-gl.enableVertexAttribArray(glPos);
+let buffer = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(positions),gl.STATIC_DRAW);
+gl.vertexAttribPointer(glPos,3,gl.FLOAT,false,0,0); gl.enableVertexAttribArray(glPos);
 
-function updateViewport(){
-    cx = document.body.clientWidth;
-    cy = document.body.clientHeight;
-    if(cx>cy){ cx=cy; } else { cy=cx; }
-    document.getElementById('main').style.width="1024px";
-    document.getElementById('main').style.height="1024px";
-    document.getElementById('main').style.transform="scale("+cx/1024+","+cy/1024+")";
-}
-window.onresize=updateViewport;
-updateViewport();
-
-// Camera controls
-document.addEventListener('mousedown',(e)=>{
-    if(e.button==0) ml=1;
-    if(e.button==2) mr=1;
-    mx=e.clientX; my=e.clientY;
-});
-document.addEventListener('mouseup',(e)=>{
-    if(e.button==0) ml=0;
-    if(e.button==2) mr=0;
-});
-document.addEventListener('mousemove',(e)=>{
-    if(ml){ ang1+=(e.clientX-mx)*0.002; ang2+=(e.clientY-my)*0.002; mm=1; }
-    if(mr){
-        let l = len*4/(cx+cy);
-        cenx+=l*(-(e.clientX-mx)*Math.sin(ang1)-(e.clientY-my)*Math.sin(ang2)*Math.cos(ang1));
-        ceny+=l*((e.clientY-my)*Math.cos(ang2));
-        cenz+=l*((e.clientX-mx)*Math.cos(ang1)-(e.clientY-my)*Math.sin(ang2)*Math.sin(ang1));
-        mm=1;
-    }
-    mx=e.clientX; my=e.clientY;
-});
-document.addEventListener('wheel',(e)=>{ e.preventDefault(); len *= Math.exp(-0.001*e.deltaY); },{passive:false});
-
-// Touch events (similar as before)
-document.addEventListener('touchstart',(e)=>{
-    if(e.touches.length==1){ mx=e.touches[0].clientX; my=e.touches[0].clientY; }
-    else if(e.touches.length==2){ mx=e.touches[0].clientX; my=e.touches[0].clientY; mx1=e.touches[1].clientX; my1=e.touches[1].clientY; }
-    lastTouch=e.touches.length;
-});
-document.addEventListener('touchmove',(e)=>{
-    e.preventDefault();
-    if(e.touches.length==1&&lastTouch==1){ ang1+=(e.touches[0].clientX-mx)*0.002; ang2+=(e.touches[0].clientY-my)*0.002; mx=e.touches[0].clientX; my=e.touches[0].clientY; }
-}, {passive:false});
-
-// Draw function
+// Draw GPU
 function drawGPU(){
+    gl.viewport(0,0,1024,1024);
     gl.uniform1f(glX,cx*2/(cx+cy));
     gl.uniform1f(glY,cy*2/(cx+cy));
     gl.uniform1f(glLen,len);
@@ -266,42 +169,54 @@ function drawGPU(){
     gl.uniform3f(glRight,Math.sin(ang1),0,-Math.cos(ang1));
     gl.uniform3f(glUp,-Math.sin(ang2)*Math.cos(ang1),Math.cos(ang2),-Math.sin(ang2)*Math.sin(ang1));
     gl.uniform3f(glForward,-Math.cos(ang1)*Math.cos(ang2),-Math.sin(ang2),-Math.sin(ang1)*Math.cos(ang2));
-    gl.uniform1f(uColorR, document.getElementById('redSlider').value);
-    gl.uniform1f(uColorG, document.getElementById('greenSlider').value);
-    gl.uniform1f(uColorB, document.getElementById('blueSlider').value);
+    gl.uniform1f(uColorR,document.getElementById('redSlider').value);
+    gl.uniform1f(uColorG,document.getElementById('greenSlider').value);
+    gl.uniform1f(uColorB,document.getElementById('blueSlider').value);
     gl.drawArrays(gl.TRIANGLES,0,6);
-    gl.finish();
+}
+
+// CPU fallback
+function drawCPU(){
+    let ctx=canvas.getContext('2d');
+    let img=ctx.createImageData(canvas.width,canvas.height);
+    for(let y=0;y<canvas.height;y++){
+        for(let x=0;x<canvas.width;x++){
+            let i=(y*canvas.width+x)*4;
+            let nx=(x-canvas.width/2)/256, ny=(y-canvas.height/2)/256;
+            let r=Math.sqrt(nx*nx+ny*ny);
+            let petals=Math.sin(r*12.0)*0.5+0.5;
+            img.data[i]=document.getElementById('redSlider').value*255*petals;
+            img.data[i+1]=document.getElementById('greenSlider').value*255*petals;
+            img.data[i+2]=document.getElementById('blueSlider').value*255*petals;
+            img.data[i+3]=255;
+        }
+    }
+    ctx.putImageData(img,0,0);
 }
 
 // Animation loop
 function animate(){
-    if(renderMode==="gpu") drawGPU();
+    if(renderMode==='gpu') drawGPU();
+    else drawCPU();
+    infoBox.innerText=`Pakcrac Flower Renderer | Mode: ${renderMode.toUpperCase()}`;
     requestAnimationFrame(animate);
 }
 animate();
 
-// UI interactions
+// UI
 document.getElementById('toggleKernel').addEventListener('click',()=>{
     let area=document.getElementById('kernelArea');
-    area.style.display=(area.style.display==="none")?"block":"none";
+    area.style.display=(area.style.display==='none')?'block':'none';
     document.getElementById('kernelText').value=KERNEL;
 });
-
 document.getElementById('applyKernel').addEventListener('click',()=>{
     KERNEL=document.getElementById('kernelText').value;
-    gl.shaderSource(fragShader,FSHADER_SOURCE+KERNEL);
-    gl.compileShader(fragShader);
-    gl.linkProgram(shaderProgram);
-    gl.useProgram(shaderProgram);
+    gl.shaderSource(fragShader,FSHADER_SOURCE+KERNEL); gl.compileShader(fragShader);
+    gl.linkProgram(shaderProgram); gl.useProgram(shaderProgram);
 });
-
-document.getElementById('resetCamera').addEventListener('click',()=>{
-    ang1=2.8; ang2=0.4; cenx=0; ceny=0; cenz=0; len=1.6;
-});
-
-document.getElementById('renderMode').addEventListener('change',(e)=>{
-    renderMode=e.target.value;
-});
+document.getElementById('resetCamera').addEventListener('click',()=>{ ang1=2.8; ang2=0.4; cenx=0; ceny=0; cenz=0; len=1.6; });
+document.getElementById('renderMode').addEventListener('change',(e)=>{ renderMode=e.target.value; });
 </script>
+
 </body>
 </html>
