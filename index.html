@@ -2,423 +2,506 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sequential Performance Scaling Renderer (Nightmare Mode)</title>
-    <!-- Load Tailwind CSS for modern, responsive styling -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Apex Overload Core (Fluid and Fixed)</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&display=swap" rel="stylesheet">
     <style>
-        /* Custom styles for the dark theme and single canvas container */
+        /* Base styles */
         body {
-            margin: 0;
-            background: #131115;
-            color: #E5E7EB;
-            font-family: 'Inter', sans-serif;
-        }
-        .main-render-container {
-            position: relative;
-            background-color: #000;
-            border-radius: 12px;
+            background: #000;
+            color: #d0d0d0;
+            font-family: 'Orbitron', sans-serif;
             overflow: hidden;
-            width: 100%;
-            /* Make it responsive and square on mobile */
-            aspect-ratio: 1 / 1; 
-            max-width: 800px;
-            margin: 0 auto;
-            box-shadow: 0 0 40px rgba(189, 44, 189, 0.5); /* Pink shadow for effect */
+            margin: 0;
         }
-        .render-canvas {
-            display: none; /* Hidden by default, controlled by JS */
-            width: 100%;
-            height: 100%;
-            border-radius: 12px;
-        }
-        .render-canvas.active {
-            display: block;
-        }
-        .overlay-label {
+        /* Canvas layers */
+        canvas {
             position: absolute;
-            top: 0.75rem;
-            left: 0.75rem;
-            padding: 0.4rem 0.75rem;
-            border-radius: 6px;
-            font-size: 1.1rem;
-            font-weight: bold;
-            z-index: 10;
-            transition: background 0.3s;
+            top: 0; left: 0;
+            width: 100vw;
+            height: 100vh;
         }
-        .overlay-time {
+        /* CPU Canvas uses screen blend mode for the cosmic effect */
+        #gpu-canvas { z-index: 1; }
+        #cpu-canvas { z-index: 2; pointer-events: none; mix-blend-mode: screen; } 
+        
+        /* UI and Glassmorphism */
+        #ui-layer {
             position: absolute;
-            bottom: 0.75rem;
-            right: 0.75rem;
-            padding: 0.4rem 0.75rem;
-            border-radius: 6px;
-            font-size: 1.1rem;
-            font-weight: bold;
-            background: rgba(0, 0, 0, 0.8);
-            color: #FFF;
             z-index: 10;
-        }
-        .stage-indicator-bar {
-            height: 8px;
-            border-radius: 4px;
-            margin-top: 1rem;
+            top: 0; left: 0; right: 0; bottom: 0;
+            pointer-events: none;
             display: flex;
-            gap: 4px;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 1.5rem;
         }
-        .stage-segment {
-            flex-grow: 1;
-            background-color: #374151; /* Default background */
-            transition: background-color 0.5s ease-in-out;
-            border-radius: 2px;
+        .glass-panel {
+            background: rgba(10, 10, 15, 0.85);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            box-shadow: 0 0 50px rgba(70, 70, 200, 0.1);
+            pointer-events: auto;
+            border-radius: 1.5rem;
         }
-        .stage-segment.success-gpu { background-color: #10B981; } /* Green for success */
-        .stage-segment.active-gpu { background-color: #3B82F6; } /* Blue for active */
-        .stage-segment.success-cpu { background-color: #FBBF24; } /* Yellow for success */
-        .stage-segment.active-cpu { background-color: #F97316; } /* Orange for active */
-        .stage-segment.success-hybrid { background-color: #EC4899; } /* Pink for success */
-        .stage-segment.active-hybrid { background-color: #BE185D; } /* Darker pink for active */
+        /* Metric display */
+        .metric-value {
+            text-shadow: 0 0 15px currentColor;
+            font-feature-settings: "tnum";
+            font-variant-numeric: tabular-nums;
+        }
+        .pulse-text {
+            animation: pulse-glow 1.5s infinite alternate;
+        }
+        @keyframes pulse-glow {
+            0% { box-shadow: 0 0 10px rgba(255, 20, 147, 0.5); opacity: 0.8; }
+            100% { box-shadow: 0 0 20px rgba(255, 20, 147, 0.9); opacity: 1.0; }
+        }
+        .button-glow:hover {
+            box-shadow: 0 0 20px currentColor;
+        }
+        .error-message {
+            background-color: rgba(255, 0, 0, 0.2);
+            color: #ffaaaa;
+            border: 1px solid #ff0000;
+            padding: 0.5rem;
+            border-radius: 0.5rem;
+        }
     </style>
 </head>
 <body>
-    <div class="min-h-screen p-4 md:p-8 flex flex-col lg:flex-row gap-8 max-w-7xl mx-auto">
-        <!-- Control Panel (Left/Top) -->
-        <div id="ui" class="lg:w-1/3 bg-gray-800 p-6 rounded-xl shadow-2xl h-fit order-2 lg:order-1">
-            <h1 class="text-3xl font-bold mb-4 text-pink-400">Sequential Performance Test (Aggressive Scaling)</h1>
-            <p class="mb-4 text-sm text-gray-400">Complexity factor increases rapidly to simulate a crushing workload. Watch how quickly each hardware stage fails and falls back to the next.</p>
-          
-            <div class="space-y-6">
-                <!-- Global Complexity -->
-                <div class="p-4 bg-gray-700 rounded-lg space-y-1">
-                    <h3 class="text-xl font-semibold text-gray-200">Current Complexity</h3>
-                    <p id="complexityDisplay" class="text-4xl font-mono text-lime-400">0.10</p>
-                </div>
 
-                <!-- Stage Indicator Bar -->
-                <div class="stage-indicator-bar">
-                    <div id="segmentGpu" class="stage-segment"></div>
-                    <div id="segmentCpu" class="stage-segment"></div>
-                    <div id="segmentHybrid" class="stage-segment"></div>
-                </div>
+    <canvas id="gpu-canvas"></canvas>
+    <canvas id="cpu-canvas"></canvas>
 
-                <!-- Performance Threshold Info -->
-                <div class="p-4 bg-gray-700 rounded-lg text-sm border-l-4 border-l-blue-400">
-                    <p class="mt-1 font-semibold text-gray-100">Active Stage: <span id="currentStage" class="text-blue-400">GPU</span></p>
-                    <p class="mt-2 text-gray-300">GPU/CPU Threshold: 50ms (20 FPS)</p>
-                    <p class="text-gray-300">Hybrid Threshold: 100ms (10 FPS)</p>
+    <div id="ui-layer">
+        <!-- Stats Panel -->
+        <div class="flex justify-between items-start">
+            <div class="glass-panel p-8 w-80 border-t-4 border-pink-500 shadow-xl">
+                <h1 class="text-3xl font-bold text-white mb-2 tracking-wider">APEX <span class="text-pink-500">LOAD</span></h1>
+                <p class="text-xs text-gray-400 uppercase tracking-widest mb-6">Extreme Hardware Stress Test</p>
+                
+                <div class="space-y-6">
+                    <div class="flex justify-between items-end border-b border-gray-700 pb-2">
+                        <div class="text-sm text-blue-400 font-extrabold uppercase">GPU Render (Fluid)</div>
+                        <div id="gpu-val" class="metric-value text-4xl font-bold text-blue-400">0 <span class="text-sm text-gray-500">FPS</span></div>
+                    </div>
+                    <div class="flex justify-between items-end border-b border-gray-700 pb-2">
+                        <div class="text-sm text-orange-400 font-extrabold uppercase">CPU Unit Score (Fixed Load)</div>
+                        <div id="cpu-val" class="metric-value text-4xl font-bold text-orange-400">0 <span class="text-sm text-gray-500">OPS/S</span></div>
+                    </div>
+                    <div class="flex justify-between items-end">
+                        <div class="text-sm text-purple-400 font-extrabold uppercase">Hybrid Overall View</div>
+                        <div id="hybrid-val" class="metric-value text-4xl font-bold text-purple-400">0.0 <span class="text-sm text-gray-500">INDEX</span></div>
+                    </div>
                 </div>
-
-                 <!-- Failure Report -->
-                 <div class="p-4 bg-gray-900 rounded-lg space-y-2">
-                    <h3 class="text-lg font-bold text-red-400">Failure Report</h3>
-                    <p class="text-sm text-gray-300">GPU Failed at: <span id="gpuFailComplexity" class="font-mono text-white">Pending...</span></p>
-                    <p class="text-sm text-gray-300">CPU Failed at: <span id="cpuFailComplexity" class="font-mono text-white">Pending...</span></p>
-                 </div>
-
-                 <!-- Render Mode & Camera -->
-                <div class="flex flex-wrap gap-3">
-                    <button id="resetCamera" class="flex-1 px-4 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition shadow-md font-semibold">Reset Camera</button>
-                    <button id="resetTest" class="flex-1 px-4 py-3 bg-red-600 hover:bg-red-700 text-white rounded-lg transition shadow-md font-semibold">Restart Test</button>
-                </div>
+                
+                <div id="status-msg" class="mt-6 text-sm text-center text-gray-500 pulse-text p-2 rounded-lg">SYSTEM IDLE</div>
+                <div id="error-msg" class="mt-4 text-xs error-message hidden"></div>
             </div>
         </div>
 
-        <!-- Main Render Viewport (Right/Bottom) -->
-        <div class="lg:w-2/3 flex flex-col gap-6 order-1 lg:order-2">
-            <div id="mainRenderBox" class="main-render-container shadow-2xl">
-                <!-- All three canvases are here, but only one is visible at a time -->
-                <canvas id="gpuCanvas" class="render-canvas"></canvas>
-                <canvas id="cpuCanvas" class="render-canvas"></canvas>
-                <canvas id="hybridCanvas" class="render-canvas"></canvas>
-
-                <div id="overlayLabel" class="overlay-label"></div>
-                <div id="overlayTime" class="overlay-time"></div>
-
-                <!-- Fallback message for Finished state -->
-                 <div id="finishedMessage" class="absolute inset-0 flex flex-col items-center justify-center p-8 text-center text-gray-300 bg-gray-900/90 hidden">
-                    <svg class="w-20 h-20 text-lime-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                    <h2 class="text-3xl font-bold mb-2 text-white">Test Finished!</h2>
-                    <p class="text-lg">Hybrid rendering failed at <span id="finalComplexity" class="font-mono text-lime-300"></span>. System reached maximum failure state.</p>
-                    <p class="mt-4 text-sm">Click 'Restart Test' to run again.</p>
-                </div>
+        <!-- Control Deck -->
+        <div class="flex justify-center pb-8">
+            <div class="glass-panel p-3 flex gap-4">
+                <button onclick="setMode('GPU')" class="px-7 py-4 rounded-full bg-blue-900/40 border border-blue-700 text-blue-300 font-bold hover:bg-blue-600 transition-all button-glow">
+                    GPU FLUID
+                </button>
+                <button onclick="setMode('CPU')" class="px-7 py-4 rounded-full bg-orange-900/40 border border-orange-700 text-orange-300 font-bold hover:bg-orange-600 transition-all button-glow">
+                    CPU NEBULA
+                </button>
+                <button onclick="setMode('HYBRID')" class="px-7 py-4 rounded-full bg-purple-900/40 border border-purple-700 text-purple-300 font-bold hover:bg-purple-600 transition-all button-glow">
+                    HYBRID VOLUMETRIC
+                </button>
+                <div class="w-px bg-gray-700 mx-2"></div>
+                <button onclick="setMode('STOP')" class="px-7 py-4 rounded-full bg-red-900/20 border border-red-900 text-red-400 font-bold hover:bg-red-600 hover:text-white transition-all">
+                    TERMINATE
+                </button>
             </div>
         </div>
     </div>
-    <script>
-        // --- Global State and Constants ---
-        const RENDER_SIZE = 512;
-        // Performance Thresholds (The nightmare test values)
-        const GPU_THRESHOLD_MS = 50; // 20 FPS
-        const CPU_THRESHOLD_MS = 50; // 20 FPS
-        const HYBRID_THRESHOLD_MS = 100; // 10 FPS for the final attempt
-      
-        // Fixed Color (Magenta/Pink for the Dahlia/Peony)
-        const FLOWER_COLOR = { R: 1.0, G: 0.2, B: 0.8 }; 
-      
-        // Camera and interaction globals (Set to a good initial view for the flower)
-        let ang1 = 2.8, ang2 = 0.4;
-        let cenx = 0, ceny = 0, cenz = 0;
-        let len = 1.6;
-        let ml = 0, mr = 0; 
-        let mx = 0, my = 0; 
-        let mx1 = 0, my1 = 0; 
-        let lasttimen = 0; 
-        let mm = 0; 
-      
-        // Performance Scaling State
-        let complexityFactor = 0.1; // Start at a low, stable complexity
-        let renderStage = 'GPU'; // 'GPU', 'CPU', 'HYBRID', 'FINISHED'
-      
-        // Failure points
-        let gpuFailComplexity = null;
-        let cpuFailComplexity = null;
-        let hybridFailComplexity = null;
-      
-        // Performance metrics
-        let gpuTime = 0;
-        let cpuTime = 0;
-        let hybridTime = 0;
-      
-        // The final GPU image data (Base64) saved on transition to CPU
-        let finalGpuImageData = null; 
-      
-        // --- UPDATED KERNEL FOR DAHLIA-LIKE 3D FRACTAL FLOWER (EXTREME COMPLEXITY) ---
-        const KERNEL_TEMPLATE = `
-        // A function for expensive, high-detail fractal noise
-        float high_detail_noise(vec3 p, float c) {
-            float f = 0.0;
-            // CRITICAL: Max iterations scales extremely aggressively with complexity
-            // At complexity 5.0, this maxIter is 51.0 (very expensive)
-            float maxIter = floor(min(100.0, c * 10.0 + 1.0)); 
-            for(int i = 0; i < 100; ++i) { // Loop limit is 100 for heavy load
-                if (float(i) < maxIter) {
-                    // Expensive fold operation and coordinate scaling
-                    p = abs(p) / (dot(p, p) + 0.0001) - 0.5; 
-                    f += sin(p.x * 50.0 + c * 10.0) * 0.02 / (float(i) + 1.0);
-                }
-            }
-            return f;
+
+<script>
+    // --- ENGINE CONFIGURATION & STATE ---
+    const ENGINE = {
+        zoom: 3.5,
+        rotY: 0.0,
+        particles: 5000, 
+        mouse: { x: 0, y: 0, down: 0, dx: 0, dy: 0 },
+        screen: { w: 0, h: 0 },
+        volumetricLight: { x: 0.0, y: 0.0, z: 0.0 } 
+    };
+
+    let activeMode = 'STOP';
+    let gpuReq, cpuInterval;
+    let lastTime = performance.now();
+    let frames = 0;
+    
+    // CPU Performance Tracking for Fixed Score
+    const CPU_BASELINE_FRAMES = 100;
+    let cpuOpsCount = 0;
+    let cpuOpsTotal = 0;
+    let cpuTimeTotal = 0;
+    let finalCpuScore = 0; // Stores the fixed OPS/S score
+
+    // --- 1. GPU APEX KERNEL (GLSL) - Enhanced for Fluid Dancing ---
+    const canvasGL = document.getElementById('gpu-canvas');
+    const gl = canvasGL.getContext('webgl');
+
+    if (!gl) {
+        // ... (Error handling remains unchanged)
+        const errorMsgElement = document.getElementById('error-msg');
+        errorMsgElement.innerText = "Error: WebGL context failed to initialize. GPU rendering is disabled. Try enabling CPU mode.";
+        errorMsgElement.classList.remove('hidden');
+        console.error("WebGL initialization failed.");
+        document.querySelector('button[onclick=\"setMode(\'GPU\')\"]').disabled = true;
+        document.querySelector('button[onclick=\"setMode(\'HYBRID\')\"]').disabled = true;
+    }
+
+    const VS = `attribute vec4 p; void main(){gl_Position=p;}`;
+    
+    // --- START OF GLSL FRAGMENT SHADER (FS) - Fluid Dynamics and Bioluminescence ---
+    const FS = `
+    precision highp float;
+    uniform vec2 u_res;
+    uniform float u_time;
+    uniform vec3 u_cam;
+    uniform vec2 u_mouse;
+    uniform float u_click;
+    uniform vec3 u_vLight;
+
+    // FBM Noise & Worley 
+    vec3 hash3(vec3 p) {
+        p = fract(p * vec3(443.897, 441.423, 437.195));
+        p += dot(p, p.zxy + 19.23);
+        return fract(vec3(p.x * p.y, p.z * p.x, p.y * p.z));
+    }
+    float noise(vec3 p) {
+        vec3 i = floor(p);
+        vec3 f = fract(p);
+        vec3 u = f * f * (3.0 - 2.0 * f);
+        float a = dot(hash3(i + vec3(0,0,0)), f - vec3(0,0,0));
+        float b = dot(hash3(i + vec3(1,0,0)), f - vec3(1,0,0));
+        float c = dot(hash3(i + vec3(0,1,0)), f - vec3(0,1,0));
+        float d = dot(hash3(i + vec3(1,1,0)), f - vec3(1,1,0));
+        float e = dot(hash3(i + vec3(0,0,1)), f - vec3(0,0,1));
+        float g = dot(hash3(i + vec3(1,0,1)), f - vec3(1,0,1));
+        float h = dot(hash3(i + vec3(0,1,1)), f - vec3(0,1,1));
+        float k = dot(hash3(i + vec3(1,1,1)), f - vec3(1,1,1));
+        return mix(mix(mix(a, b, u.x), mix(c, d, u.x), u.y), mix(mix(e, g, u.x), mix(h, k, u.x), u.y), u.z);
+    }
+    float fbm(vec3 p) { 
+        float f = 0.0;
+        f += 0.5000 * noise(p); p *= 2.02;
+        f += 0.2500 * noise(p); p *= 2.03;
+        f += 0.1250 * noise(p); p *= 2.01;
+        f += 0.0625 * noise(p);
+        return f;
+    }
+    
+    // Utility functions for rotation and smooth blending
+    mat2 rot(float a) { float s=sin(a), c=cos(a); return mat2(c,-s,s,c); }
+    float smin(float a, float b, float k) { float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0); return mix(b, a, h) - k * h * (1.0 - h); }
+
+    // --- GPU Aesthetic Upgrade: Highly Dynamic Fluid Dancing ---
+    vec3 fluidWarp(vec3 p) {
+        float time_factor = u_time * 0.5;
+        
+        // Complex, time-based rotational and scaling distortion
+        p.xy *= rot(sin(time_factor * 0.1) * 0.5); 
+        p.yz *= rot(cos(time_factor * 0.15) * 0.7);
+
+        // Core pulsating noise distortion
+        float distortion = fbm(p * 2.5 + time_factor * 0.2) * 0.5;
+        p += distortion * vec3(0.5, 0.0, 0.5);
+
+        // Mouse interaction for localized fluid ripples
+        if(u_click > 0.5) {
+            vec2 m = (u_mouse - 0.5) * 4.0; 
+            m.y *= -1.0;
+            float d = length(p.xy - m) + 0.1;
+            float ripple = sin(d * 30.0 - u_time * 15.0) * exp(-d * 4.0);
+            p.z += ripple * 0.8; // Stronger Z-ripple
         }
-      
-        // The main SDF/Density function for the 3D Dahlia
-        float kernal(vec3 p, float c){ 
+        return p;
+    }
+
+    // High-complexity Peony SDF (Bioluminescent Structure)
+    float map(vec3 p) {
+        p = fluidWarp(p);
+        p.xz *= rot(p.y * 0.3 + u_time * 0.1);
+
+        float r = length(p);
+        float a = atan(p.z, p.x);
+        
+        float d = r - 1.0;
+
+        // Petal Structure Modulation
+        float waves = sin(a*15.0 + p.y*20.0) * sin(p.y*4.0 + u_time*0.3);
+        float roughness = fbm(p * 6.0 + u_time * 0.5) * 0.1;
+        float cup = smoothstep(-1.0, 0.5, p.y);
+        
+        d += (waves * 0.3 * cup) + roughness;
+
+        float inner = length(p + vec3(0,0.5,0)) - 0.5;
+        d = smin(d, inner, 0.2);
+
+        return d * 0.6;
+    }
+
+    // --- RAYMARCHING & SHADING ---
+    void main() {
+        vec2 uv = (gl_FragCoord.xy - 0.5 * u_res) / u_res.y;
+        
+        vec3 ro = u_cam;
+        vec3 ta = vec3(0, -0.2, 0);
+        vec3 fwd = normalize(ta - ro);
+        vec3 right = normalize(cross(fwd, vec3(0,1,0)));
+        vec3 up = cross(right, fwd);
+        vec3 rd = normalize(fwd + uv.x*right + uv.y*up);
+
+        float t = 0.0, d = 0.0;
+        
+        // Extreme Raymarching Loop (256 steps)
+        for(int i=0; i<256; i++) { 
+            vec3 p = ro + rd * t;
+            d = map(p);
+            if(d<0.0001 || t>12.0) break;
+            t += d * 0.6; 
+        }
+
+        vec3 col = vec3(0.0);
+        
+        if(t < 12.0) {
+            vec3 p = ro + rd * t;
+            vec2 e = vec2(0.001, 0);
+            vec3 n = normalize(vec3(map(p+e.xyy)-map(p-e.xyy), map(p+e.yxy)-map(p-e.yxy), map(p+e.yyx)-map(p-e.yyx)));
+            
+            vec3 lig = u_vLight; 
+            if(length(u_vLight) < 0.1) { 
+                lig = normalize(vec3(sin(u_time*0.5), 1.0, cos(u_time*0.5)));
+            }
+
+            float LdotN = max(dot(n, lig), 0.0);
+            vec3 halfVec = normalize(lig - rd);
+            
+            // Bioluminescent Color Pallette (Increased Intensity)
             float r = length(p);
-          
-            // 1. Angular Density (Petal Count/Spiral)
-            float petals = 8.0 + c * 6.0; 
-            float spiral = atan(p.y,p.x) + p.z * (2.0 + c * 0.5); 
-            float petalShape = cos(spiral * petals) * 0.5 + 0.5;
-          
-            // 2. Vertical Shape (The overall spherical profile)
-            float phi = acos(p.z/r); 
-            float verticalShape = sin(phi * (3.0 + c * 1.0)); 
-          
-            // 3. Radial Falloff (Density is highest near the center)
-            float radialDensity = exp(-r*r * (5.0 + c * 2.0)); 
-          
-            float density = petalShape * verticalShape * radialDensity;
-      
-            // CRITICAL: Add high-complexity noise for surface texture as complexity increases
-            if (c > 0.1) {
-                density += high_detail_noise(p * (1.0 + c * 0.5), c) * 0.05;
+            
+            vec3 albedo = mix(vec3(0.0, 0.8, 1.0), vec3(1.0, 0.0, 1.0), smoothstep(0.5, 2.0, r)); // More vivid cyan/magenta
+            
+            float fresnel = pow(1.0 - max(0.0, dot(-n, rd)), 8.0) * 2.0; // Sharper, stronger Fresnel
+            float sss = pow(max(0.0, dot(-lig, rd)), 4.0) * 1.5; 
+            float spec = pow(max(0.0, dot(n, halfVec)), 200.0) * 2.0; // Pin-sharp, intense specular
+            
+            col = albedo * (LdotN * 0.7 + 0.15) 
+                  + albedo * sss * 1.5 // Max translucency boost
+                  + vec3(1.0) * spec * 1.5 // Bright specular
+                  + vec3(0.7, 0.9, 1.0) * fresnel * 1.0; 
+
+            // Volumetric Light Scattering / Fog
+            float t_norm = t / 10.0;
+            float lightScatter = max(0.0, dot(lig, -rd)) * 0.5 * exp(-t_norm * 1.5);
+            col += vec3(0.0, 0.7, 1.0) * lightScatter * 3.0; // Max light scatter
+
+            // Fluid Interaction Glow
+            if(u_click > 0.5) {
+                float distToMouseRay = length(uv - (u_mouse - 0.5) * vec2(u_res.x/u_res.y, 1.0));
+                col += vec3(0.5, 1.0, 1.0) * exp(-distToMouseRay * 10.0) * 1.5; 
             }
-      
-            // Add extra fractal detail to the base density to increase shading cost
-            density += sin(p.x*10.0) * cos(p.y*10.0) * sin(p.z*10.0) * c * 0.01;
-      
-            // Return the density field
-            return density;
+            
+            col = mix(col, vec3(0.0), 1.0 - exp(-0.015 * t*t));
         }
-        `;
-      
-      
-        // --- UI Elements & Setup ---
-        const gpuCanvas = document.getElementById('gpuCanvas');
-        const cpuCanvas = document.getElementById('cpuCanvas');
-        const hybridCanvas = document.getElementById('hybridCanvas');
-      
-        const uiElements = {
-            overlayLabel: document.getElementById('overlayLabel'),
-            overlayTime: document.getElementById('overlayTime'),
-            complexityDisplay: document.getElementById('complexityDisplay'),
-            currentStage: document.getElementById('currentStage'),
-            finishedMessage: document.getElementById('finishedMessage'),
-            finalComplexity: document.getElementById('finalComplexity'),
-            segmentGpu: document.getElementById('segmentGpu'),
-            segmentCpu: document.getElementById('segmentCpu'),
-            segmentHybrid: document.getElementById('segmentHybrid'),
-            gpuFailComplexity: document.getElementById('gpuFailComplexity'),
-            cpuFailComplexity: document.getElementById('cpuFailComplexity'),
-        };
-      
-        // Set fixed internal render size for consistency
-        [gpuCanvas, cpuCanvas, hybridCanvas].forEach(c => {
-            c.width = RENDER_SIZE;
-            c.height = RENDER_SIZE;
-        });
-      
-        // --- WebGL Setup (GPU Render) ---
-        // Initialize context with preserveDrawingBuffer: true to allow for image capture
-        const gl = gpuCanvas.getContext('webgl', { preserveDrawingBuffer: true }); 
-      
-        let shaderProgram;
-      
-        // Uniform location aliases
-        let glposition, glright, glforward, glup, glorigin, glx, gly, gllen;
-        let glColorR, glColorG, glColorB;
-        let glComplexity;
-      
-        const VSHADER_SOURCE =
-            "#version 100 \n"+
-            "precision highp float;\n" +
-            "attribute vec4 position;" +
-            "varying vec3 dir, localdir;" +
-            "uniform vec3 right, forward, up, origin;" +
-            "uniform float x,y;" +
-            "void main() {" +
-            " gl_Position = position; " +
-            " dir = forward + right * position.x*x + up * position.y*y;" +
-            " localdir.x = position.x*x;" +
-            " localdir.y = position.y*y;" +
-            " localdir.z = -1.0;" +
-            "} ";
-      
-        const FSHADER_SOURCE_CORE =
-            // The core raymarching logic (long and complex)
-            "#version 100 \n" +
-            "#define PI 3.14159265358979324\n" +
-            "#define M_L 0.3819660113\n" +
-            "#define M_R 0.6180339887\n" +
-            "#define MAXR 8\n" +
-            "#define SOLVER 8\n" +
-            "precision highp float;\n" +
-            // NOTE: kernal(vec3, float) function definition is INJECTED here
-            "uniform vec3 right, forward, up, origin;\n" +
-            "varying vec3 dir, localdir;\n" +
-            "uniform float len, uComplexity;\n" + // uComplexity added
-            "uniform float uColorR, uColorG, uColorB;\n" +
-            "vec3 ver;\n" +
-            "int sign;\n" +
-            "float v, v1, v2;\n" +
-            "float r1, r2, r3, r4, m1, m2, m3, m4;\n" +
-            "vec3 n, reflect;\n" +
-            "const float step = 0.002;\n" +
-            "const float MAX_DISTANCE = 3.0; \n" + // Added Max Distance for stability
-            "vec3 color;\n" +
-            "void main() {\n" +
-            " color = vec3(0.0);\n" +
-            " sign=0;\n"+
-            " v1 = kernal(origin + dir * (step*len), uComplexity);\n" +
-            " v2 = kernal(origin, uComplexity);\n" +
-            " for (int k = 2; k < 1002; k++) {\n" + // Max 1000 steps
-            " float currentR = step * len * float(k);\n" +
-            " if (currentR > MAX_DISTANCE) break; \n" +
-            " ver = origin + dir * currentR;\n" +
-            " v = kernal(ver, uComplexity);\n" +
-              
-            // --- SOLVER 1: Root Finding ---
-            " if (v > 0.0 && v1 < 0.0) {\n" +
-            " r1 = step * len*float(k - 1);\n" +
-            " r2 = currentR;\n" +
-            " m1 = kernal(origin + dir * r1, uComplexity);\n" +
-            " m2 = kernal(origin + dir * r2, uComplexity);\n" +
-            " for (int l = 0; l < SOLVER; l++) {\n" +
-            " r3 = r1 * 0.5 + r2 * 0.5;\n" +
-            " m3 = kernal(origin + dir * r3, uComplexity);\n" +
-            " if (m3 > 0.0) {\n" +
-            " r2 = r3;\n" +
-            " m2 = m3;\n" +
-            " }\n" +
-            " else {\n" +
-            " r1 = r3;\n" +
-            " m1 = m3;\n" +
-            " }\n" +
-            " }\n" +
-            " if (r3 < MAX_DISTANCE) {\n" +
-            " sign=1;" +
-            " break;\n" +
-            " }\n" +
-            " }\n" +
-              
-            // --- SOLVER 2: Maxima Finding (Gold Section Search) ---
-            " if (v < v1&&v1>v2&&v1 < 0.0 && (v1*2.0 > v || v1 * 2.0 > v2)) {\n" +
-            " r1 = step * len*float(k - 2);\n" +
-            " r2 = step * len*(float(k) - 2.0 + 2.0*M_L);\n" +
-            " r3 = step * len*(float(k) - 2.0 + 2.0*M_R);\n" +
-            " r4 = currentR;\n" +
-            " m2 = kernal(origin + dir * r2, uComplexity);\n" +
-            " m3 = kernal(origin + dir * r3, uComplexity);\n" +
-            " for (int l = 0; l < MAXR; l++) {\n" +
-            " if (m2 > m3) {\n" +
-            " r4 = r3;\n" +
-            " r3 = r2;\n" +
-            " r2 = r4 * M_L + r1 * M_R;\n" +
-            " m3 = m2;\n" +
-            " m2 = kernal(origin + dir * r2, uComplexity);\n" +
-            " }\n" +
-            " else {\n" +
-            " r1 = r2;\n" +
-            " r2 = r3;\n" +
-            " r3 = r4 * M_R + r1 * M_L;\n" +
-            " m2 = m3;\n" +
-            " m3 = kernal(origin + dir * r3, uComplexity);\n" +
-            " }\n" +
-            " }\n" +
-            " if (m2 > 0.0) {\n" +
-            " r1 = step * len*float(k - 2);\n" +
-            " r2 = r2;\n" +
-            " m1 = kernal(origin + dir * r1, uComplexity);\n" +
-            " m2 = kernal(origin + dir * r2, uComplexity);\n" +
-            " for (int l = 0; l < SOLVER; l++) {\n" +
-            " r3 = r1 * 0.5 + r2 * 0.5;\n" +
-            " m3 = kernal(origin + dir * r3, uComplexity);\n" +
-            " if (m3 > 0.0) {\n" +
-            " r2 = r3;\n" +
-            " m2 = m3;\n" +
-            " }\n" +
-            " else {\n" +
-            " r1 = r3;\n" +
-            " m1 = m3;\n" +
-            " }\n" +
-            " }\n" +
-            " if (r3 < MAX_DISTANCE && r3 > step * len) {\n" +
-            " sign=1;" +
-            " break;\n" +
-            " }\n" +
-            " }\n" +
-            " else if (m3 > 0.0) {\n" +
-            " r1 = step * len*float(k - 2);\n" +
-            " r2 = r3;\n" +
-            " m1 = kernal(origin + dir * r1, uComplexity);\n" +
-            " m2 = kernal(origin + dir * r2, uComplexity);\n" +
-            " for (int l = 0; l < SOLVER; l++) {\n" +
-            " r3 = r1 * 0.5 + r2 * 0.5;\n" +
-            " m3 = kernal(origin + dir * r3, uComplexity);\n" +
-            " if (m3 > 0.0) {\n" +
-            " r2 = r3;\n" +
-            " m2 = m3;\n" +
-            " }\n" +
-            " else {\n" +
-            " r1 = r3;\n" +
-            " m1 = m3;\n" +
-            " }\n" +
-            " }\n" +
-            " if (r3 < MAX_DISTANCE && r3 > step * len) {\n" +
-            " sign=1;" +
-            " break;\n" +
-            " }\n" +
-            " }\n" +
-            " }\n" +
-            " v2 = v1;\n" +
-            " v1 = v;\n" +
-            " }\n" +
-              
-            // --- LIGHTING AND SHADING ---
-            " if (sign==1) {\n" +
-            " ver = origin + dir*r3 ;\n" +
-            " r1=ver.x*ver.x+ver.y*ver.y+ver.z*ver.z;\n" +
-              
-            // Normal calculation using finite differences (still expensive)
-            " n.x = kernal(ver - right * (r3*0.00025), uComplexity) - kernal(ver + right * (r3*0.00025), uComplexity);\n" +
-            " n.y = kernal(ver - up * (r3*0.00025), uComplexity) - kernal(ver + up * (r3*0.00025), uComplexity);\n" +
-            " n.z = kernal(ver + forward * (r3*0.00025), uComplexity) - kernal(ver - forward * (r3*0.00025), uComplexity);\n" +
-            " r
+
+        gl_FragColor = vec4(col, 1.0);
+    }`;
+    // --- END OF GLSL FRAGMENT SHADER (FS) ---
+
+    // --- WebGL Initialization ---
+    let prog, uRes, uTime, uCam, uMouse, uClick, uVLight;
+    
+    if (gl) {
+        // ... (WebGL initialization functions remain unchanged)
+        function createProg(gl, vs, fs) {
+            const p = gl.createProgram();
+            const v = gl.createShader(gl.VERTEX_SHADER); gl.shaderSource(v, vs); gl.compileShader(v);
+            const f = gl.createShader(gl.FRAGMENT_SHADER); gl.shaderSource(f, fs); gl.compileShader(f);
+            if(!gl.getShaderParameter(f, gl.COMPILE_STATUS)) {
+                console.error("Shader Compile Error:", gl.getShaderInfoLog(f));
+                return null;
+            }
+            gl.attachShader(p, v); gl.attachShader(p, f); gl.linkProgram(p);
+            return p;
+        }
+
+        prog = createProg(gl, VS, FS);
+
+        if (prog) {
+            const buf = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, -1,1, 1,-1, 1,1]), gl.STATIC_DRAW);
+            const loc = gl.getAttribLocation(prog, 'p');
+            gl.enableVertexAttribArray(loc);
+            gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+
+            uRes = gl.getUniformLocation(prog, 'u_res');
+            uTime = gl.getUniformLocation(prog, 'u_time');
+            uCam = gl.getUniformLocation(prog, 'u_cam');
+            uMouse = gl.getUniformLocation(prog, 'u_mouse');
+            uClick = gl.getUniformLocation(prog, 'u_click');
+            uVLight = gl.getUniformLocation(prog, 'u_vLight');
+        } else {
+            document.getElementById('error-msg').innerText = "Error: GLSL program failed to link. Check console for shader errors.";
+            document.getElementById('error-msg').classList.remove('hidden');
+        }
+    }
+
+
+    // --- 2. CPU PHYSICS ENGINE (Nebula Forge) ---
+    const ctx = document.getElementById('cpu-canvas').getContext('2d');
+    let bodies = [];
+    const G = 0.05; 
+    const K_STRESS = 0.5; 
+
+    function initBodies() {
+        bodies = [];
+        // Reset CPU score counters upon initialization
+        cpuOpsCount = 0;
+        cpuOpsTotal = 0;
+        cpuTimeTotal = 0;
+        finalCpuScore = 0; 
+
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        for(let i=0; i<ENGINE.particles; i++) {
+            const hue = (i * 360 / ENGINE.particles) % 360;
+            bodies.push({
+                x: Math.random() * w,
+                y: Math.random() * h,
+                vx: (Math.random()-0.5)*1.0, 
+                vy: (Math.random()-0.5)*1.0,
+                mass: Math.random() * 2 + 1, 
+                color: `hsl(${hue}, 80%, 70%)` 
+            });
+        }
+    }
+
+    // O(N^2) Physics 
+    function updatePhysics() {
+        let ops = 0;
+        const count = bodies.length;
+        const centerX = ENGINE.screen.w / 2;
+        const centerY = ENGINE.screen.h / 2;
+        
+        let totalMomentumX = 0;
+        let totalMomentumY = 0;
+
+        for(let i=0; i<count; i++) {
+            let p1 = bodies[i];
+            
+            // Per-Particle Stress Field Calculation
+            let dxC = p1.x - centerX;
+            let dyC = p1.y - centerY;
+            let distC = Math.sqrt(dxC*dxC + dyC*dyC);
+            
+            let stressForce = K_STRESS * Math.sin(p1.x * 0.005) * Math.cos(p1.y * 0.005) * 0.5;
+            p1.vx += stressForce * dxC / (distC + 1) * 0.01;
+            p1.vy += stressForce * dyC / (distC + 1) * 0.01;
+            ops += 5; 
+
+            // N-Body interaction
+            for(let j=i+1; j<count; j++) { 
+                let p2 = bodies[j];
+                let dx = p2.x - p1.x;
+                let dy = p2.y - p1.y;
+                let distSq = dx*dx + dy*dy + 200; 
+                let dist = Math.sqrt(distSq);
+                let force = (p1.mass * p2.mass * G) / distSq;
+                
+                let fx = (dx / dist) * force;
+                let fy = (dy / dist) * force;
+                
+                p1.vx += fx / p1.mass;
+                p1.vy += fy / p1.mass;
+                p2.vx -= fx / p2.mass;
+                p2.vy -= fy / p2.mass;
+                
+                ops++; 
+            }
+            
+            // Integration, Damping, and Boundary Wrap
+            p1.x += p1.vx;
+            p1.y += p1.vy;
+            p1.vx *= 0.99;
+            p1.vy *= 0.99;
+
+            if (p1.x < 0) p1.x += ENGINE.screen.w;
+            if (p1.x > ENGINE.screen.w) p1.x -= ENGINE.screen.w;
+            if (p1.y < 0) p1.y += ENGINE.screen.h;
+            if (p1.y > ENGINE.screen.h) p1.y -= ENGINE.screen.h;
+            
+            totalMomentumX += p1.vx * p1.mass;
+            totalMomentumY += p1.vy * p1.mass;
+        }
+
+        // Update the Global Light Vector (Hybrid Link)
+        if (activeMode === 'HYBRID') {
+            const avgVX = totalMomentumX / count;
+            const avgVY = totalMomentumY / count;
+            ENGINE.volumetricLight.x = avgVX * 0.5;
+            ENGINE.volumetricLight.y = -0.5; 
+            ENGINE.volumetricLight.z = avgVY * 0.5;
+            
+            const len = Math.sqrt(ENGINE.volumetricLight.x**2 + ENGINE.volumetricLight.y**2 + ENGINE.volumetricLight.z**2);
+            if (len > 0) {
+                 ENGINE.volumetricLight.x /= len;
+                 ENGINE.volumetricLight.y /= len;
+                 ENGINE.volumetricLight.z /= len;
+            }
+        } else {
+             ENGINE.volumetricLight = { x: 0.0, y: 0.0, z: 0.0 };
+        }
+
+        return ops;
+    }
+
+    function renderCPU() {
+        // Clear with a very light trail (creating the nebula effect)
+        ctx.fillStyle = activeMode === 'HYBRID' ? 'rgba(0, 0, 0, 0.05)' : 'rgba(0, 0, 0, 0.1)';
+        ctx.fillRect(0,0,ENGINE.screen.w, ENGINE.screen.h);
+        
+        ctx.globalCompositeOperation = 'lighter';
+        
+        // Particle Drawing (Beautiful Star Field)
+        for(let p of bodies) {
+            ctx.fillStyle = p.color;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.mass, 0, 2 * Math.PI); 
+            ctx.fill();
+        }
+        
+        ctx.globalCompositeOperation = 'source-over';
+    }
+
+    // --- LOOPS ---
+
+    function loopGPU(t) {
+        if(activeMode !== 'GPU' && activeMode !== 'HYBRID' || !gl || !prog) return;
+        gpuReq = requestAnimationFrame(loopGPU);
+
+        ENGINE.rotY += 0.003;
+        let camX = Math.sin(ENGINE.rotY) * ENGINE.zoom;
+        let camZ = Math.cos(ENGINE.rotY) * ENGINE.zoom;
+
+        const mx = ENGINE.mouse.x / window.innerWidth;
+        const my = ENGINE.mouse.y / window.innerHeight;
+
+        gl.useProgram(prog);
+        gl.uniform2f(uRes, window.innerWidth, window.innerHeight);
+        gl.uniform1f(uTime, t*0.001);
+        gl.uniform3f(uCam, camX, 1.5, camZ);
+        gl.uniform2f(uMouse, mx, my);
+        gl.uniform1f(uClick, ENGINE.mouse.down);
+        gl.uniform3f(uVLight, ENGINE.volumetricLight.x, ENGINE.volumetricLight.y, 
